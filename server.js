@@ -7,7 +7,9 @@ import bcrypt from 'bcryptjs';
 import cookieParser from 'cookie-parser';
 import { randomUUID } from 'crypto';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
-import { join, dirname } from 'path';
+import { join, dirname, basename } from 'path';
+import { readdir, stat } from 'fs/promises';
+import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -16,6 +18,16 @@ const JWT_SECRET = process.env.JWT_SECRET || randomUUID();
 const DATA_DIR = join(__dirname, '.data');
 
 if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
+
+// ─── Favorites Store ───
+const FAVS_FILE = join(DATA_DIR, 'favorites.json');
+function loadFavorites() {
+  if (existsSync(FAVS_FILE)) return JSON.parse(readFileSync(FAVS_FILE, 'utf8'));
+  return [];
+}
+function saveFavorites(favs) {
+  writeFileSync(FAVS_FILE, JSON.stringify(favs, null, 2));
+}
 
 // ─── User Store ───
 const USERS_FILE = join(DATA_DIR, 'users.json');
@@ -130,6 +142,93 @@ app.delete('/api/tabs/:id', authMiddleware, (req, res) => {
   store.tabs.splice(idx, 1);
   saveSessionStore(store);
   res.json({ ok: true });
+});
+
+// ─── Filesystem API ───
+app.get('/api/fs/ls', authMiddleware, async (req, res) => {
+  const dirPath = req.query.path || '/';
+  try {
+    const entries = await readdir(dirPath, { withFileTypes: true });
+    const items = await Promise.all(entries.map(async (entry) => {
+      const fullPath = join(dirPath, entry.name);
+      let size = 0;
+      try {
+        const s = await stat(fullPath);
+        size = s.size;
+      } catch {}
+      return {
+        name: entry.name,
+        path: fullPath,
+        isDir: entry.isDirectory(),
+        isSymLink: entry.isSymbolicLink(),
+        size,
+      };
+    }));
+    // Sort: dirs first, then by name
+    items.sort((a, b) => {
+      if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+    res.json(items);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ─── Favorites API ───
+app.get('/api/favorites', authMiddleware, (req, res) => {
+  res.json(loadFavorites());
+});
+
+app.post('/api/favorites', authMiddleware, (req, res) => {
+  const { path } = req.body;
+  if (!path) return res.status(400).json({ error: 'path required' });
+  const favs = loadFavorites();
+  if (!favs.includes(path)) {
+    favs.push(path);
+    saveFavorites(favs);
+  }
+  res.json(favs);
+});
+
+app.delete('/api/favorites', authMiddleware, (req, res) => {
+  const { path } = req.body;
+  let favs = loadFavorites();
+  favs = favs.filter(f => f !== path);
+  saveFavorites(favs);
+  res.json(favs);
+});
+
+// ─── Git API ───
+app.get('/api/git/log', authMiddleware, (req, res) => {
+  const repoPath = req.query.path;
+  if (!repoPath) return res.status(400).json({ error: 'path required' });
+  try {
+    const gitDir = join(repoPath, '.git');
+    if (!existsSync(gitDir)) return res.json({ commits: [], error: 'Not a git repo' });
+    const log = execSync(
+      'git log --all --oneline --decorate --graph -50 --format="%h|%s|%an|%ar|%D"',
+      { cwd: repoPath, timeout: 5000, encoding: 'utf8' }
+    );
+    const commits = log.trim().split('\n').map(line => {
+      const parts = line.split('|');
+      // The graph chars are before the hash
+      const graphMatch = line.match(/^([^a-f0-9]*)([a-f0-9]+)\|/);
+      const graph = graphMatch ? graphMatch[1] : '';
+      return {
+        graph,
+        hash: parts[0]?.replace(/[^a-f0-9]/g, '') || '',
+        message: parts[1] || '',
+        author: parts[2] || '',
+        date: parts[3] || '',
+        refs: parts[4] || '',
+        raw: line,
+      };
+    }).filter(c => c.hash || c.graph);
+    res.json({ commits });
+  } catch (err) {
+    res.json({ commits: [], error: err.message });
+  }
 });
 
 // ─── HTTP + WebSocket Server ───

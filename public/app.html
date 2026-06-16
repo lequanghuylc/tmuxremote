@@ -11,6 +11,7 @@
   <!-- Header -->
   <header id="header">
     <div class="header-left">
+      <button id="burgerBtn" class="btn-burger" title="Menu">☰</button>
       <span class="logo">🖥️ tmuxremote</span>
     </div>
     <div class="header-center">
@@ -26,14 +27,55 @@
     </div>
   </header>
 
-  <!-- Tab Bar -->
-  <div id="tabBar" class="tab-bar">
-    <div id="tabs" class="tabs"></div>
-    <button id="addTabBtn" class="btn-add-tab" title="New Tab">+</button>
+  <!-- App Layout: sidebar + main -->
+  <div id="appLayout" class="app-layout">
+
+    <!-- Sidebar -->
+    <aside id="sidebar" class="sidebar">
+      <div class="sidebar-tabs">
+        <button class="sidebar-tab active" data-panel="files" title="File Manager">📁</button>
+        <button class="sidebar-tab" data-panel="git" title="Git">🔀</button>
+      </div>
+      <div class="sidebar-content">
+        <!-- Files Panel -->
+        <div id="filesPanel" class="sidebar-panel active">
+          <div class="panel-header">
+            <span>File Manager</span>
+          </div>
+          <div id="fileTree" class="file-tree"></div>
+        </div>
+        <!-- Git Panel -->
+        <div id="gitPanel" class="sidebar-panel">
+          <div class="panel-header">
+            <span>Git</span>
+          </div>
+          <div id="gitGraphs" class="git-graphs"></div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Sidebar overlay for mobile -->
+    <div id="sidebarOverlay" class="sidebar-overlay"></div>
+
+    <!-- Main content -->
+    <main class="main-content">
+      <!-- Tab Bar -->
+      <div id="tabBar" class="tab-bar">
+        <div id="tabs" class="tabs"></div>
+        <button id="addTabBtn" class="btn-add-tab" title="New Tab">+</button>
+      </div>
+
+      <!-- Terminal Container -->
+      <div id="terminalContainer" class="terminal-container"></div>
+    </main>
   </div>
 
-  <!-- Terminal Container -->
-  <div id="terminalContainer" class="terminal-container"></div>
+  <!-- Context Menu -->
+  <div id="contextMenu" class="context-menu" style="display:none">
+    <div class="context-menu-item" data-action="open-terminal">🖥️ Open terminal here</div>
+    <div class="context-menu-item" data-action="add-favorite">⭐ Add to favorites</div>
+    <div class="context-menu-item context-menu-danger" data-action="remove-favorite" style="display:none">✕ Remove from favorites</div>
+  </div>
 
   <!-- Mobile Keyboard Overlay -->
   <div id="mobileKeyboard" class="mobile-keyboard">
@@ -46,7 +88,7 @@
       </div>
     </div>
 
-    <!-- Compact row: always visible when keyboard is shown -->
+    <!-- Compact row -->
     <div class="keyboard-compact" id="keyboardCompact">
       <div class="key-row">
         <button class="mod-key compact-key" data-action="ctrl-c">^C</button>
@@ -61,7 +103,7 @@
       </div>
     </div>
 
-    <!-- Extended rows: hidden when collapsed -->
+    <!-- Extended rows -->
     <div class="keyboard-rows" id="keyboardRows" style="display:none">
       <div class="key-row">
         <button class="mod-key" data-action="arrow-left">←</button>

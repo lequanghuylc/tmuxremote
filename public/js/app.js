@@ -650,12 +650,408 @@ function escHtml(s) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+// ─── Sidebar ───
+function initSidebar() {
+  const burgerBtn = document.getElementById('burgerBtn');
+  const sidebar = document.getElementById('sidebar');
+  const overlay = document.getElementById('sidebarOverlay');
+  const sidebarTabs = document.querySelectorAll('.sidebar-tab');
+
+  // Burger menu (mobile)
+  burgerBtn.addEventListener('click', () => {
+    sidebar.classList.toggle('open');
+    overlay.classList.toggle('open');
+  });
+  overlay.addEventListener('click', () => {
+    sidebar.classList.remove('open');
+    overlay.classList.remove('open');
+  });
+
+  // Sidebar tab switching
+  sidebarTabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      sidebarTabs.forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      document.querySelectorAll('.sidebar-panel').forEach(p => p.classList.remove('active'));
+      document.getElementById(tab.dataset.panel + 'Panel').classList.add('active');
+      // Refresh git graphs when switching to git tab
+      if (tab.dataset.panel === 'git') loadGitGraphs();
+    });
+  });
+}
+
+// ─── Favorites State ───
+let favorites = [];
+
+async function loadFavorites() {
+  const res = await fetch('/api/favorites', { headers: { 'Authorization': 'Bearer ' + getToken() } });
+  favorites = await res.json();
+}
+
+async function addFavorite(path) {
+  const res = await fetch('/api/favorites', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ path }),
+  });
+  favorites = await res.json();
+  renderFileTree();
+}
+
+async function removeFavorite(path) {
+  const res = await fetch('/api/favorites', {
+    method: 'DELETE',
+    headers: authHeaders(),
+    body: JSON.stringify({ path }),
+  });
+  favorites = await res.json();
+  renderFileTree();
+}
+
+// ─── File Tree ───
+let treeState = {}; // { path: { expanded: bool, children: [] } }
+
+async function loadDir(path) {
+  const res = await fetch(`/api/fs/ls?path=${encodeURIComponent(path)}`, {
+    headers: { 'Authorization': 'Bearer ' + getToken() },
+  });
+  if (!res.ok) return [];
+  return await res.json();
+}
+
+function renderFileTree() {
+  const container = document.getElementById('fileTree');
+  container.innerHTML = '';
+
+  // Favorites section (if any)
+  if (favorites.length > 0) {
+    const section = document.createElement('div');
+    section.className = 'tree-favorites-section';
+    const label = document.createElement('div');
+    label.className = 'tree-section-label';
+    label.textContent = '⭐ Favorites';
+    section.appendChild(label);
+
+    favorites.forEach(favPath => {
+      const item = createTreeItem({
+        name: favPath.split('/').filter(Boolean).pop() || '/',
+        path: favPath,
+        isDir: true,
+        isFavorite: true,
+      });
+      section.appendChild(item);
+    });
+    container.appendChild(section);
+  }
+
+  // Root section
+  const rootLabel = document.createElement('div');
+  rootLabel.className = 'tree-section-label';
+  rootLabel.textContent = '💻 Root';
+  container.appendChild(rootLabel);
+
+  // Root node (auto-expand)
+  if (!treeState['/']) {
+    treeState['/'] = { expanded: false, children: [], loaded: false };
+  }
+  const rootItem = createTreeItem({ name: '/', path: '/', isDir: true });
+  container.appendChild(rootItem);
+
+  // Auto-expand root on first load — find the container and arrow from the rendered item
+  if (!treeState['/'].loaded) {
+    const rootRow = rootItem.querySelector('.tree-item');
+    const rootArrow = rootRow.querySelector('.tree-arrow');
+    const rootChildren = rootItem.querySelector('.tree-children');
+    toggleTreeItem('/', rootChildren, rootArrow);
+  }
+}
+
+function createTreeItem(entry) {
+  const wrapper = document.createElement('div');
+
+  const row = document.createElement('div');
+  row.className = 'tree-item' + (entry.isFavorite ? ' favorite-item' : '');
+  row.style.paddingLeft = (entry.path === '/' ? 8 : 0) + 'px';
+
+  const arrow = document.createElement('span');
+  arrow.className = 'tree-arrow' + (entry.isDir ? '' : ' hidden');
+  arrow.textContent = '▶';
+
+  const icon = document.createElement('span');
+  icon.className = 'tree-icon';
+  if (entry.isFavorite) {
+    icon.textContent = '⭐';
+  } else if (entry.isDir) {
+    icon.textContent = '📁';
+  } else {
+    icon.textContent = '📄';
+  }
+
+  const name = document.createElement('span');
+  name.className = 'tree-name';
+  name.textContent = entry.name;
+
+  row.appendChild(arrow);
+  row.appendChild(icon);
+  row.appendChild(name);
+
+  // Calculate indent level based on path depth
+  const depth = entry.path === '/' ? 0 : entry.path.split('/').filter(Boolean).length;
+  row.style.paddingLeft = (8 + depth * 16) + 'px';
+
+  const childrenContainer = document.createElement('div');
+  childrenContainer.className = 'tree-children';
+
+  // Expand/collapse on click (dirs only)
+  if (entry.isDir) {
+    row.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleTreeItem(entry.path, childrenContainer, arrow);
+    });
+  }
+
+  // Context menu: right-click (desktop) or double-tap (mobile)
+  row.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    showContextMenu(e.clientX, e.clientY, entry.path);
+  });
+
+  let lastTap = 0;
+  row.addEventListener('touchend', (e) => {
+    const now = Date.now();
+    if (now - lastTap < 300) {
+      e.preventDefault();
+      const touch = e.changedTouches[0];
+      showContextMenu(touch.clientX, touch.clientY, entry.path);
+    }
+    lastTap = now;
+  });
+
+  // Update expanded state
+  const state = treeState[entry.path];
+  if (state && state.expanded) {
+    arrow.classList.add('expanded');
+    childrenContainer.classList.add('expanded');
+    if (state.children && state.children.length > 0) {
+      renderChildren(childrenContainer, entry.path);
+    }
+  }
+
+  wrapper.appendChild(row);
+  wrapper.appendChild(childrenContainer);
+  return wrapper;
+}
+
+function renderChildren(container, parentPath) {
+  container.innerHTML = '';
+  const state = treeState[parentPath];
+  if (!state || !state.children) return;
+
+  state.children.forEach(child => {
+    const item = createTreeItem(child);
+    container.appendChild(item);
+  });
+}
+
+async function toggleTreeItem(path, container, arrow) {
+  if (!treeState[path]) {
+    treeState[path] = { expanded: false, children: [], loaded: false };
+  }
+
+  const state = treeState[path];
+
+  if (!state.expanded) {
+    // Expand
+    state.expanded = true;
+    if (arrow) arrow.classList.add('expanded');
+    if (container) container.classList.add('expanded');
+
+    // Load children if not loaded
+    if (!state.loaded) {
+      if (container) {
+        const loading = document.createElement('div');
+        loading.className = 'tree-loading';
+        loading.textContent = 'Loading...';
+        container.appendChild(loading);
+      }
+
+      const children = await loadDir(path);
+      state.children = children;
+      state.loaded = true;
+
+      if (container) {
+        renderChildren(container, path);
+      }
+    }
+  } else {
+    // Collapse
+    state.expanded = false;
+    if (arrow) arrow.classList.remove('expanded');
+    if (container) container.classList.remove('expanded');
+  }
+}
+
+// ─── Context Menu ───
+let contextMenuTarget = null;
+
+function showContextMenu(x, y, path) {
+  contextMenuTarget = path;
+  const menu = document.getElementById('contextMenu');
+  const isFav = favorites.includes(path);
+
+  menu.querySelector('[data-action="add-favorite"]').style.display = isFav ? 'none' : 'flex';
+  menu.querySelector('[data-action="remove-favorite"]').style.display = isFav ? 'flex' : 'none';
+
+  // Position: keep within viewport
+  menu.style.display = 'block';
+  const rect = menu.getBoundingClientRect();
+  const maxX = window.innerWidth - rect.width - 4;
+  const maxY = window.innerHeight - rect.height - 4;
+  menu.style.left = Math.min(x, maxX) + 'px';
+  menu.style.top = Math.min(y, maxY) + 'px';
+}
+
+function hideContextMenu() {
+  document.getElementById('contextMenu').style.display = 'none';
+  contextMenuTarget = null;
+}
+
+function initContextMenu() {
+  const menu = document.getElementById('contextMenu');
+
+  // Hide on click elsewhere
+  document.addEventListener('click', hideContextMenu);
+  document.addEventListener('contextmenu', (e) => {
+    // Only prevent default on tree items (handled there)
+    if (!e.target.closest('.tree-item')) hideContextMenu();
+  });
+
+  // Menu actions
+  menu.querySelectorAll('.context-menu-item').forEach(item => {
+    item.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const action = item.dataset.action;
+      const path = contextMenuTarget;
+      hideContextMenu();
+      if (!path) return;
+
+      if (action === 'open-terminal') {
+        // Create a new terminal tab with cd to that path
+        const name = path.split('/').filter(Boolean).pop() || '/';
+        const res = await fetch('/api/tabs', {
+          method: 'POST',
+          headers: authHeaders(),
+          body: JSON.stringify({ name }),
+        });
+        const tab = await res.json();
+        tabs.push(tab);
+        renderTabs();
+        switchTab(tab.id);
+        // Send cd command after a brief delay for terminal to be ready
+        setTimeout(() => {
+          const t = terminals[tab.id];
+          if (t && t.ws.readyState === WebSocket.OPEN) {
+            t.ws.send(JSON.stringify({ type: 'data', data: `cd ${path}\n` }));
+          }
+        }, 500);
+      } else if (action === 'add-favorite') {
+        await addFavorite(path);
+        loadGitGraphs();
+      } else if (action === 'remove-favorite') {
+        await removeFavorite(path);
+        loadGitGraphs();
+      }
+    });
+  });
+}
+
+// ─── Git Graphs ───
+async function loadGitGraphs() {
+  const container = document.getElementById('gitGraphs');
+  container.innerHTML = '';
+
+  if (favorites.length === 0) {
+    container.innerHTML = '<div class="git-no-favs">No favorites yet.<br>Add paths via right-click in the file manager to see their git graphs here.</div>';
+    return;
+  }
+
+  for (const favPath of favorites) {
+    const repoDiv = document.createElement('div');
+    repoDiv.className = 'git-repo';
+
+    const header = document.createElement('div');
+    header.className = 'git-repo-header';
+    header.innerHTML = `🔀 <span>${escHtml(favPath)}</span>`;
+    repoDiv.appendChild(header);
+
+    try {
+      const res = await fetch(`/api/git/log?path=${encodeURIComponent(favPath)}`, {
+        headers: { 'Authorization': 'Bearer ' + getToken() },
+      });
+      const data = await res.json();
+
+      if (data.error || data.commits.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'git-empty';
+        empty.textContent = data.error || 'No commits found';
+        repoDiv.appendChild(empty);
+      } else {
+        data.commits.forEach(commit => {
+          const row = document.createElement('div');
+          row.className = 'git-commit';
+
+          const graph = document.createElement('span');
+          graph.className = 'git-graph-chars';
+          graph.textContent = commit.graph;
+
+          const hash = document.createElement('span');
+          hash.className = 'git-hash';
+          hash.textContent = commit.hash;
+
+          const msg = document.createElement('span');
+          msg.className = 'git-msg';
+          msg.textContent = commit.message;
+
+          row.appendChild(graph);
+          row.appendChild(hash);
+          row.appendChild(msg);
+
+          if (commit.refs) {
+            const refs = document.createElement('span');
+            refs.className = 'git-refs';
+            refs.textContent = commit.refs;
+            row.appendChild(refs);
+          }
+
+          const date = document.createElement('span');
+          date.className = 'git-date';
+          date.textContent = commit.date;
+          row.appendChild(date);
+
+          repoDiv.appendChild(row);
+        });
+      }
+    } catch (err) {
+      const empty = document.createElement('div');
+      empty.className = 'git-empty';
+      empty.textContent = 'Error loading git log';
+      repoDiv.appendChild(empty);
+    }
+
+    container.appendChild(repoDiv);
+  }
+}
+
 // ─── Init ───
 async function init() {
   await checkAuth();
+  await loadFavorites();
   await loadTabs();
+  initSidebar();
+  initContextMenu();
   initMobileKeyboard();
   updateZoomLabel();
+  renderFileTree();
 }
 
 init();
