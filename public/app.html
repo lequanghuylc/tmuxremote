@@ -73,8 +73,14 @@
   <!-- Context Menu -->
   <div id="contextMenu" class="context-menu" style="display:none">
     <div class="context-menu-item" data-action="open-terminal">🖥️ Open terminal here</div>
+    <div class="context-menu-item" data-action="open-editor">📝 Open in editor</div>
     <div class="context-menu-item" data-action="add-favorite">⭐ Add to favorites</div>
     <div class="context-menu-item context-menu-danger" data-action="remove-favorite" style="display:none">✕ Remove from favorites</div>
+    <div class="context-menu-sep"></div>
+    <div class="context-menu-item" data-action="new-file" style="display:none">📄 New file</div>
+    <div class="context-menu-item" data-action="new-folder" style="display:none">📁 New folder</div>
+    <div class="context-menu-item" data-action="rename">✏️ Rename</div>
+    <div class="context-menu-item context-menu-danger" data-action="delete">🗑️ Delete</div>
   </div>
 
   <!-- Mobile Keyboard Overlay -->
@@ -152,5 +158,15 @@
   <button id="showKeyboardFab" class="show-keyboard-fab" style="display:none" title="Show dev keyboard">⌨</button>
 
   <script type="module" src="/js/app.js"></script>
+  <!-- Monaco Editor loader -->
+  <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.50.0/min/vs/loader.min.js"></script>
+  <script>
+    window.monacoReady = new Promise(resolve => {
+      require.config({ paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.50.0/min/vs' } });
+      require(['vs/editor/editor.main'], function () {
+        resolve(window.monaco);
+      });
+    });
+  </script>
 </body>
 </html>

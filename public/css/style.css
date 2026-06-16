@@ -358,6 +358,7 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.tab .tab-icon { font-size: 13px; flex-shrink: 0; }
 .tab .tab-close {
   font-size: 14px;
   color: #484f58;
@@ -393,6 +394,12 @@ body {
   display: none;
 }
 .tab-terminal.active { display: block; }
+.tab-editor {
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  display: none;
+}
+.tab-editor.active { display: block; }
 
 /* ─── Context Menu ─── */
 .context-menu {
@@ -417,6 +424,7 @@ body {
 }
 .context-menu-item:hover { background: rgba(88,166,255,0.12); }
 .context-menu-danger:hover { background: rgba(248,81,73,0.12); color: #f85149; }
+.context-menu-sep { height: 1px; background: #30363d; margin: 4px 0; }
 
 /* ─── Mobile Keyboard ─── */
 .mobile-keyboard {

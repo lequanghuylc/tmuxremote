@@ -6,6 +6,7 @@ let currentUser = null;
 let tabs = [];
 let activeTabId = null;
 let terminals = {};  // { tabId: { terminal, fitAddon, ws, container, fontSize } }
+let editors = {};    // { tabId: { monaco, model, filePath, saveTimer, container } }
 let activeModifiers = new Set();
 let currentFontSize = 14;
 
@@ -57,7 +58,9 @@ function renderTabs() {
     const el = document.createElement('div');
     el.className = `tab ${tab.id === activeTabId ? 'active' : ''}`;
     el.dataset.id = tab.id;
+    const icon = tab.type === 'editor' ? '📝' : '🖥️';
     el.innerHTML = `
+      <span class="tab-icon">${icon}</span>
       <span class="tab-name" title="Double-click to rename">${escHtml(tab.name)}</span>
       <span class="tab-close" title="Close tab">×</span>
     `;
@@ -105,6 +108,26 @@ function showRenameModal(tabId) {
 
   async function save() {
     const newName = input.value.trim() || tab.name;
+
+    // If editor tab, rename the actual file too
+    if (tab.type === 'editor' && tab.filePath) {
+      const dir = tab.filePath.substring(0, tab.filePath.lastIndexOf('/'));
+      const newPath = dir + '/' + newName;
+      if (newPath !== tab.filePath) {
+        try {
+          await fetch('/api/fs/rename', {
+            method: 'POST',
+            headers: authHeaders(),
+            body: JSON.stringify({ oldPath: tab.filePath, newPath }),
+          });
+          tab.filePath = newPath;
+          // Update editor state
+          if (editors[tabId]) editors[tabId].filePath = newPath;
+        } catch {}
+        renderFileTree();
+      }
+    }
+
     tab.name = newName;
     await fetch(`/api/tabs/${tabId}`, {
       method: 'PUT',
@@ -137,15 +160,27 @@ async function createTab(name) {
 }
 
 async function closeTab(tabId) {
-  if (!confirm('Close this tab? The tmux session will be killed.')) return;
+  const tab = tabs.find(t => t.id === tabId);
+  const label = tab?.type === 'editor' ? 'Close this editor tab?' : 'Close this tab? The tmux session will be killed.';
+  if (!confirm(label)) return;
   await fetch(`/api/tabs/${tabId}`, { method: 'DELETE', headers: { 'Authorization': 'Bearer ' + getToken() } });
   tabs = tabs.filter(t => t.id !== tabId);
 
+  // Clean up terminal
   if (terminals[tabId]) {
     terminals[tabId].ws?.close();
     terminals[tabId].terminal.dispose();
     terminals[tabId].container.remove();
     delete terminals[tabId];
+  }
+
+  // Clean up editor
+  if (editors[tabId]) {
+    clearTimeout(editors[tabId].saveTimer);
+    editors[tabId].model?.dispose();
+    editors[tabId].monaco?.dispose();
+    editors[tabId].container?.remove();
+    delete editors[tabId];
   }
 
   if (activeTabId === tabId) {
@@ -157,26 +192,41 @@ async function closeTab(tabId) {
 }
 
 function switchTab(tabId) {
+  const tab = tabs.find(t => t.id === tabId);
   activeTabId = tabId;
   renderTabs();
   hideEmptyState();
 
-  document.querySelectorAll('.tab-terminal').forEach(el => el.classList.remove('active'));
+  // Hide all panels
+  document.querySelectorAll('.tab-terminal, .tab-editor').forEach(el => el.classList.remove('active'));
 
-  if (terminals[tabId]) {
-    terminals[tabId].container.classList.add('active');
-    requestAnimationFrame(() => {
+  if (tab?.type === 'editor') {
+    if (editors[tabId]) {
+      editors[tabId].container.classList.add('active');
       requestAnimationFrame(() => {
-        terminals[tabId].fitAddon.fit();
-        terminals[tabId].terminal.focus();
-        const { ws, terminal } = terminals[tabId];
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'resize', cols: terminal.cols, rows: terminal.rows }));
-        }
+        editors[tabId].monaco.layout();
+        editors[tabId].monaco.focus();
       });
-    });
+    } else {
+      initEditor(tabId);
+    }
   } else {
-    initTerminal(tabId);
+    // Terminal tab
+    if (terminals[tabId]) {
+      terminals[tabId].container.classList.add('active');
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          terminals[tabId].fitAddon.fit();
+          terminals[tabId].terminal.focus();
+          const { ws, terminal } = terminals[tabId];
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'resize', cols: terminal.cols, rows: terminal.rows }));
+          }
+        });
+      });
+    } else {
+      initTerminal(tabId);
+    }
   }
 }
 
@@ -330,6 +380,133 @@ function initTerminal(tabId) {
   terminals[tabId] = { terminal, fitAddon, ws, container, resizeObserver };
 
   setTimeout(() => terminal.focus(), 50);
+}
+
+// ─── Editor ───
+const LANG_MAP = {
+  js: 'javascript', mjs: 'javascript', cjs: 'javascript',
+  ts: 'typescript', mts: 'typescript', cts: 'typescript',
+  jsx: 'javascriptreact', tsx: 'typescriptreact',
+  html: 'html', htm: 'html',
+  css: 'css', scss: 'scss', less: 'less',
+  json: 'json', jsonc: 'json',
+  yml: 'yaml', yaml: 'yaml',
+  toml: 'toml',
+  md: 'markdown',
+  py: 'python', rb: 'ruby', php: 'php',
+  sh: 'shell', bash: 'shell', zsh: 'shell',
+  xml: 'xml', svg: 'xml',
+  sql: 'sql', graphql: 'graphql',
+  dockerfile: 'dockerfile',
+  makefile: 'makefile',
+  conf: 'ini', cfg: 'ini', ini: 'ini', env: 'ini',
+  txt: 'plaintext', log: 'plaintext', text: 'plaintext',
+  c: 'c', h: 'c', cpp: 'cpp', hpp: 'cpp', cc: 'cpp',
+  go: 'go', rs: 'rust', java: 'java', kt: 'kotlin',
+  swift: 'swift', dart: 'dart', lua: 'lua', r: 'r',
+};
+
+function getLanguageForFile(filePath) {
+  const ext = filePath.split('.').pop().toLowerCase();
+  const base = filePath.split('/').pop().toLowerCase();
+  if (base === 'dockerfile') return 'dockerfile';
+  if (base === 'makefile') return 'makefile';
+  return LANG_MAP[ext] || 'plaintext';
+}
+
+async function openFileInEditor(filePath) {
+  // Check if already open
+  const existingTab = tabs.find(t => t.type === 'editor' && t.filePath === filePath);
+  if (existingTab) {
+    switchTab(existingTab.id);
+    return;
+  }
+
+  // Create editor tab via API
+  const name = filePath.split('/').pop();
+  const res = await fetch('/api/tabs', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ type: 'editor', filePath, name }),
+  });
+  const tab = await res.json();
+  tabs.push(tab);
+  renderTabs();
+  switchTab(tab.id);
+}
+
+async function initEditor(tabId) {
+  const tab = tabs.find(t => t.id === tabId);
+  if (!tab || !tab.filePath) return;
+
+  const monaco = await window.monacoReady;
+
+  const container = document.createElement('div');
+  container.className = 'tab-editor active';
+  container.id = `editor-${tabId}`;
+  document.getElementById('terminalContainer').appendChild(container);
+
+  // Load file content
+  let content = '';
+  try {
+    const res = await fetch(`/api/fs/read?path=${encodeURIComponent(tab.filePath)}`, {
+      headers: { 'Authorization': 'Bearer ' + getToken() },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      content = data.content;
+    }
+  } catch {}
+
+  const language = getLanguageForFile(tab.filePath);
+  const model = monaco.editor.createModel(content, language);
+  const editor = monaco.editor.create(container, {
+    model,
+    theme: 'vs-dark',
+    automaticLayout: false,
+    fontSize: 14,
+    fontFamily: "'SF Mono', 'Menlo', 'Monaco', 'Cascadia Code', 'Consolas', monospace",
+    minimap: { enabled: true },
+    scrollBeyondLastLine: false,
+    wordWrap: 'on',
+    tabSize: 2,
+    renderWhitespace: 'selection',
+    bracketPairColorization: { enabled: true },
+    smoothScrolling: true,
+    cursorBlinking: 'smooth',
+    padding: { top: 8 },
+  });
+
+  // Resize observer
+  const resizeObserver = new ResizeObserver(() => editor.layout());
+  resizeObserver.observe(container);
+
+  // Auto-save with debounce
+  let saveTimer = null;
+  model.onDidChangeContent(() => {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(async () => {
+      await fetch('/api/fs/write', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ path: tab.filePath, content: model.getValue() }),
+      });
+    }, 1000);
+  });
+
+  // Ctrl+S save immediately
+  editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, async () => {
+    clearTimeout(saveTimer);
+    await fetch('/api/fs/write', {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ path: tab.filePath, content: model.getValue() }),
+    });
+  });
+
+  editors[tabId] = { monaco: editor, model, filePath: tab.filePath, saveTimer, container, resizeObserver };
+
+  setTimeout(() => editor.focus(), 50);
 }
 
 // ─── New Tab Modal ───
@@ -802,11 +979,16 @@ function createTreeItem(entry) {
   const childrenContainer = document.createElement('div');
   childrenContainer.className = 'tree-children';
 
-  // Expand/collapse on click (dirs only)
+  // Expand/collapse on click (dirs only), open editor on click (files)
   if (entry.isDir) {
     row.addEventListener('click', (e) => {
       e.stopPropagation();
       toggleTreeItem(entry.path, childrenContainer, arrow);
+    });
+  } else {
+    row.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openFileInEditor(entry.path);
     });
   }
 
@@ -893,14 +1075,33 @@ async function toggleTreeItem(path, container, arrow) {
 
 // ─── Context Menu ───
 let contextMenuTarget = null;
+let contextMenuIsDir = false;
 
 function showContextMenu(x, y, path) {
   contextMenuTarget = path;
   const menu = document.getElementById('contextMenu');
   const isFav = favorites.includes(path);
 
-  menu.querySelector('[data-action="add-favorite"]').style.display = isFav ? 'none' : 'flex';
-  menu.querySelector('[data-action="remove-favorite"]').style.display = isFav ? 'flex' : 'none';
+  // Determine if target is dir or file from tree state
+  let isDir = path === '/'; // root is always dir
+  if (!isDir) {
+    for (const statePath in treeState) {
+      const state = treeState[statePath];
+      if (state.children) {
+        const found = state.children.find(c => c.path === path);
+        if (found) { isDir = found.isDir; break; }
+      }
+    }
+  }
+  contextMenuIsDir = isDir;
+
+  // Show/hide items based on file vs dir
+  menu.querySelector('[data-action="open-terminal"]').style.display = isDir ? 'flex' : 'none';
+  menu.querySelector('[data-action="open-editor"]').style.display = isDir ? 'none' : 'flex';
+  menu.querySelector('[data-action="add-favorite"]').style.display = (isFav || !isDir) ? 'none' : 'flex';
+  menu.querySelector('[data-action="remove-favorite"]').style.display = (isFav && isDir) ? 'flex' : 'none';
+  menu.querySelector('[data-action="new-file"]').style.display = isDir ? 'flex' : 'none';
+  menu.querySelector('[data-action="new-folder"]').style.display = isDir ? 'flex' : 'none';
 
   // Position: keep within viewport
   menu.style.display = 'block';
@@ -916,13 +1117,55 @@ function hideContextMenu() {
   contextMenuTarget = null;
 }
 
+// ─── Input Modal (for rename, new file, new folder) ───
+function showInputModal(title, defaultValue, callback) {
+  document.querySelectorAll('.modal-overlay').forEach(m => m.remove());
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h2>${escHtml(title)}</h2>
+      <input type="text" id="inputModalField" value="${escHtml(defaultValue)}" placeholder="">
+      <div class="modal-actions">
+        <button class="btn-cancel" type="button">Cancel</button>
+        <button class="btn-save" type="button">OK</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  const input = overlay.querySelector('#inputModalField');
+  const cancelBtn = overlay.querySelector('.btn-cancel');
+  const saveBtn = overlay.querySelector('.btn-save');
+  requestAnimationFrame(() => { input.focus(); input.select(); });
+  function close() { overlay.remove(); }
+  cancelBtn.addEventListener('click', close);
+  saveBtn.addEventListener('click', () => { callback(input.value.trim()); close(); });
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { callback(input.value.trim()); close(); }
+    if (e.key === 'Escape') close();
+  });
+}
+
+// Helper: refresh the parent directory in the tree after file operations
+function refreshTreeParent(filePath) {
+  const parentPath = filePath.substring(0, filePath.lastIndexOf('/')) || '/';
+  if (treeState[parentPath]) {
+    treeState[parentPath].loaded = false;
+    treeState[parentPath].children = [];
+    // Find and re-toggle
+    const parentRow = document.querySelector(`.tree-item[data-path="${CSS.escape(parentPath)}"]`);
+    // Simpler: just re-render the whole tree
+    renderFileTree();
+  }
+}
+
 function initContextMenu() {
   const menu = document.getElementById('contextMenu');
 
   // Hide on click elsewhere
   document.addEventListener('click', hideContextMenu);
   document.addEventListener('contextmenu', (e) => {
-    // Only prevent default on tree items (handled there)
     if (!e.target.closest('.tree-item')) hideContextMenu();
   });
 
@@ -932,34 +1175,99 @@ function initContextMenu() {
       e.stopPropagation();
       const action = item.dataset.action;
       const path = contextMenuTarget;
+      const isDir = contextMenuIsDir;
       hideContextMenu();
       if (!path) return;
 
       if (action === 'open-terminal') {
-        // Create a new terminal tab with cd to that path
         const name = path.split('/').filter(Boolean).pop() || '/';
         const res = await fetch('/api/tabs', {
           method: 'POST',
           headers: authHeaders(),
-          body: JSON.stringify({ name }),
+          body: JSON.stringify({ name, type: 'terminal' }),
         });
         const tab = await res.json();
         tabs.push(tab);
         renderTabs();
         switchTab(tab.id);
-        // Send cd command after a brief delay for terminal to be ready
         setTimeout(() => {
           const t = terminals[tab.id];
           if (t && t.ws.readyState === WebSocket.OPEN) {
             t.ws.send(JSON.stringify({ type: 'data', data: `cd ${path}\n` }));
           }
         }, 500);
+      } else if (action === 'open-editor') {
+        openFileInEditor(path);
       } else if (action === 'add-favorite') {
         await addFavorite(path);
         loadGitGraphs();
       } else if (action === 'remove-favorite') {
         await removeFavorite(path);
         loadGitGraphs();
+      } else if (action === 'new-file') {
+        showInputModal('New file in ' + path, '', async (name) => {
+          if (!name) return;
+          const filePath = path + '/' + name;
+          await fetch('/api/fs/touch', {
+            method: 'POST',
+            headers: authHeaders(),
+            body: JSON.stringify({ path: filePath }),
+          });
+          treeState[path] && (treeState[path].loaded = false);
+          renderFileTree();
+        });
+      } else if (action === 'new-folder') {
+        showInputModal('New folder in ' + path, '', async (name) => {
+          if (!name) return;
+          const dirPath = path + '/' + name;
+          await fetch('/api/fs/mkdir', {
+            method: 'POST',
+            headers: authHeaders(),
+            body: JSON.stringify({ path: dirPath }),
+          });
+          treeState[path] && (treeState[path].loaded = false);
+          renderFileTree();
+        });
+      } else if (action === 'rename') {
+        const oldName = path.split('/').pop();
+        showInputModal('Rename', oldName, async (newName) => {
+          if (!newName || newName === oldName) return;
+          const dir = path.substring(0, path.lastIndexOf('/'));
+          const newPath = dir + '/' + newName;
+          await fetch('/api/fs/rename', {
+            method: 'POST',
+            headers: authHeaders(),
+            body: JSON.stringify({ oldPath: path, newPath }),
+          });
+          // Update editor tab if open for this path
+          for (const tabId in editors) {
+            if (editors[tabId].filePath === path) {
+              editors[tabId].filePath = newPath;
+              const tab = tabs.find(t => t.id === tabId);
+              if (tab) { tab.filePath = newPath; tab.name = newName; }
+            }
+          }
+          renderTabs();
+          treeState[dir] && (treeState[dir].loaded = false);
+          renderFileTree();
+        });
+      } else if (action === 'delete') {
+        const name = path.split('/').pop();
+        if (!confirm(`Delete "${name}"? This cannot be undone.`)) return;
+        await fetch('/api/fs/delete', {
+          method: 'DELETE',
+          headers: authHeaders(),
+          body: JSON.stringify({ path }),
+        });
+        // Close editor tab if open for this path
+        for (const tabId in editors) {
+          if (editors[tabId].filePath === path) {
+            closeTab(tabId);
+          }
+        }
+        const dir = path.substring(0, path.lastIndexOf('/')) || '/';
+        treeState[dir] && (treeState[dir].loaded = false);
+        renderFileTree();
       }
     });
   });

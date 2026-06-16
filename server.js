@@ -6,9 +6,9 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import cookieParser from 'cookie-parser';
 import { randomUUID } from 'crypto';
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync, renameSync, rmdirSync } from 'fs';
 import { join, dirname, basename } from 'path';
-import { readdir, stat } from 'fs/promises';
+import { readdir, stat, readFile, writeFile, mkdir, unlink, rename, rm } from 'fs/promises';
 import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 
@@ -109,11 +109,21 @@ app.get('/api/tabs', authMiddleware, (req, res) => {
 });
 
 app.post('/api/tabs', authMiddleware, (req, res) => {
-  const { name } = req.body;
+  const { name, type, filePath } = req.body;
   const id = randomUUID().slice(0, 8);
-  const tmuxSession = `tmuxremote-${id}`;
   const store = loadSessions();
-  const tab = { id, name: name || `Tab ${store.tabs.length + 1}`, tmuxSession, created: new Date().toISOString() };
+
+  if (type === 'editor' && filePath) {
+    // Editor tab
+    const tab = { id, name: name || basename(filePath), type: 'editor', filePath, created: new Date().toISOString() };
+    store.tabs.push(tab);
+    saveSessionStore(store);
+    return res.json(tab);
+  }
+
+  // Terminal tab (default)
+  const tmuxSession = `tmuxremote-${id}`;
+  const tab = { id, name: name || `Tab ${store.tabs.length + 1}`, type: 'terminal', tmuxSession, created: new Date().toISOString() };
   store.tabs.push(tab);
   saveSessionStore(store);
   res.json(tab);
@@ -134,11 +144,13 @@ app.delete('/api/tabs/:id', authMiddleware, (req, res) => {
   const idx = store.tabs.findIndex(t => t.id === req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'Tab not found' });
   const tab = store.tabs[idx];
-  // Kill the tmux session
-  try {
-    const p = pty.spawn('tmux', ['kill-session', '-t', tab.tmuxSession], { name: 'xterm-256color', cols: 80, rows: 24 });
-    p.onExit(() => {});
-  } catch {}
+  // Kill tmux session only for terminal tabs
+  if (tab.type === 'terminal' && tab.tmuxSession) {
+    try {
+      const p = pty.spawn('tmux', ['kill-session', '-t', tab.tmuxSession], { name: 'xterm-256color', cols: 80, rows: 24 });
+      p.onExit(() => {});
+    } catch {}
+  }
   store.tabs.splice(idx, 1);
   saveSessionStore(store);
   res.json({ ok: true });
@@ -170,6 +182,84 @@ app.get('/api/fs/ls', authMiddleware, async (req, res) => {
       return a.name.localeCompare(b.name);
     });
     res.json(items);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Read file content
+app.get('/api/fs/read', authMiddleware, async (req, res) => {
+  const filePath = req.query.path;
+  if (!filePath) return res.status(400).json({ error: 'path required' });
+  try {
+    const content = await readFile(filePath, 'utf8');
+    const s = await stat(filePath);
+    res.json({ content, size: s.size, path: filePath });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Write file content
+app.post('/api/fs/write', authMiddleware, async (req, res) => {
+  const { path: filePath, content } = req.body;
+  if (!filePath) return res.status(400).json({ error: 'path required' });
+  try {
+    await writeFile(filePath, content, 'utf8');
+    res.json({ ok: true, path: filePath });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Rename file/folder
+app.post('/api/fs/rename', authMiddleware, async (req, res) => {
+  const { oldPath, newPath } = req.body;
+  if (!oldPath || !newPath) return res.status(400).json({ error: 'oldPath and newPath required' });
+  try {
+    await rename(oldPath, newPath);
+    res.json({ ok: true, oldPath, newPath });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Delete file/folder
+app.delete('/api/fs/delete', authMiddleware, async (req, res) => {
+  const filePath = req.body.path;
+  if (!filePath) return res.status(400).json({ error: 'path required' });
+  try {
+    const s = await stat(filePath);
+    if (s.isDirectory()) {
+      await rm(filePath, { recursive: true, force: true });
+    } else {
+      await unlink(filePath);
+    }
+    res.json({ ok: true, path: filePath });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Create directory
+app.post('/api/fs/mkdir', authMiddleware, async (req, res) => {
+  const { path: dirPath } = req.body;
+  if (!dirPath) return res.status(400).json({ error: 'path required' });
+  try {
+    await mkdir(dirPath, { recursive: true });
+    res.json({ ok: true, path: dirPath });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Create empty file
+app.post('/api/fs/touch', authMiddleware, async (req, res) => {
+  const { path: filePath } = req.body;
+  if (!filePath) return res.status(400).json({ error: 'path required' });
+  try {
+    await writeFile(filePath, '', { flag: 'a' }); // append nothing = touch
+    res.json({ ok: true, path: filePath });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
