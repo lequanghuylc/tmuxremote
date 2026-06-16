@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>tmuxremote — Login</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0d1117;
+      color: #c9d1d9;
+      display: flex; align-items: center; justify-content: center;
+      min-height: 100vh;
+    }
+    .login-box {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 12px;
+      padding: 40px;
+      width: 100%;
+      max-width: 380px;
+      margin: 16px;
+    }
+    .login-box h1 {
+      font-size: 24px;
+      margin-bottom: 8px;
+      color: #e6edf3;
+      font-weight: 600;
+    }
+    .login-box p {
+      font-size: 14px;
+      color: #8b949e;
+      margin-bottom: 24px;
+    }
+    .field { margin-bottom: 16px; }
+    .field label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      margin-bottom: 6px;
+      color: #c9d1d9;
+    }
+    .field input {
+      width: 100%;
+      padding: 10px 12px;
+      background: #0d1117;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      color: #e6edf3;
+      font-size: 15px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .field input:focus { border-color: #58a6ff; }
+    .error {
+      background: #3d1414;
+      border: 1px solid #6e2b2b;
+      color: #f85149;
+      padding: 10px 12px;
+      border-radius: 8px;
+      font-size: 13px;
+      margin-bottom: 16px;
+      display: none;
+    }
+    button {
+      width: 100%;
+      padding: 11px;
+      background: #238636;
+      color: #fff;
+      border: 1px solid #2ea043;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    button:hover { background: #2ea043; }
+    button:active { background: #1a7f37; }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+  </style>
+</head>
+<body>
+  <div class="login-box">
+    <h1>🖥️ tmuxremote</h1>
+    <p>Persistent terminal sessions via tmux</p>
+    <div class="error" id="error"></div>
+    <form id="loginForm">
+      <div class="field">
+        <label for="username">Username</label>
+        <input type="text" id="username" name="username" autocomplete="username" autofocus>
+      </div>
+      <div class="field">
+        <label for="password">Password</label>
+        <input type="password" id="password" name="password" autocomplete="current-password">
+      </div>
+      <button type="submit" id="btn">Sign in</button>
+    </form>
+  </div>
+  <script>
+    // Redirect if already authed
+    const existing = sessionStorage.getItem('tmuxremote_token');
+    if (existing) {
+      fetch('/api/me', { headers: { 'Authorization': 'Bearer ' + existing } })
+        .then(r => { if (r.ok) location.href = '/app.html'; });
+    }
+
+    const form = document.getElementById('loginForm');
+    const err = document.getElementById('error');
+    form.addEventListener('submit', async e => {
+      e.preventDefault();
+      err.style.display = 'none';
+      const btn = document.getElementById('btn');
+      btn.disabled = true; btn.textContent = 'Signing in…';
+      try {
+        const res = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: document.getElementById('username').value,
+            password: document.getElementById('password').value,
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          sessionStorage.setItem('tmuxremote_token', data.token);
+          location.href = '/app.html';
+        } else {
+          const data = await res.json();
+          err.textContent = data.error || 'Login failed';
+          err.style.display = 'block';
+        }
+      } catch (e) {
+        err.textContent = 'Network error';
+        err.style.display = 'block';
+      }
+      btn.disabled = false; btn.textContent = 'Sign in';
+    });
+  </script>
+</body>
+</html>
