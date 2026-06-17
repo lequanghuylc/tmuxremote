@@ -30,7 +30,7 @@ if (FIREBASE_ENABLED) {
   try {
     const serviceAccount = JSON.parse(readFileSync(FIREBASE_SERVICE_ACCOUNT, 'utf8'));
     firebaseApp = admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount),
+      credential: admin.cert(serviceAccount),
     });
     console.log('🔥 Firebase Authentication enabled');
     if (EMAIL_WHITELIST) {
