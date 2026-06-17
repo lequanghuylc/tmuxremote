@@ -78,25 +78,82 @@
     button:hover { background: #2ea043; }
     button:active { background: #1a7f37; }
     button:disabled { opacity: 0.6; cursor: not-allowed; }
+
+    /* Google button */
+    .google-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      background: #fff;
+      color: #3c4043;
+      border: 1px solid #dadce0;
+      font-size: 15px;
+      font-weight: 500;
+      padding: 10px 16px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.15s, box-shadow 0.15s;
+    }
+    .google-btn:hover {
+      background: #f7f8f8;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+    }
+    .google-btn:active { background: #eef0f1; }
+    .google-btn svg {
+      width: 20px; height: 20px;
+      flex-shrink: 0;
+    }
+    .divider {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin: 20px 0;
+      color: #484f58;
+      font-size: 13px;
+    }
+    .divider::before, .divider::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: #30363d;
+    }
+    .loading { text-align: center; color: #8b949e; padding: 40px 0; }
   </style>
 </head>
 <body>
   <div class="login-box">
     <h1>🖥️ tmuxremote</h1>
     <p>Persistent terminal sessions via tmux</p>
-    <div class="error" id="error"></div>
-    <form id="loginForm">
-      <div class="field">
-        <label for="username">Username</label>
-        <input type="text" id="username" name="username" autocomplete="username" autofocus>
+    <div id="loading" class="loading">Loading…</div>
+    <div id="loginContent" style="display:none">
+      <div class="error" id="error"></div>
+
+      <!-- Firebase Google Sign-In (shown when authMode=firebase) -->
+      <div id="firebaseAuth" style="display:none">
+        <button type="button" class="google-btn" id="googleBtn">
+          <svg viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 01-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18A10.96 10.96 0 001 12c0 1.77.42 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+          Sign in with Google
+        </button>
       </div>
-      <div class="field">
-        <label for="password">Password</label>
-        <input type="password" id="password" name="password" autocomplete="current-password">
+
+      <!-- Password auth (shown when authMode=password) -->
+      <div id="passwordAuth" style="display:none">
+        <form id="loginForm">
+          <div class="field">
+            <label for="username">Username</label>
+            <input type="text" id="username" name="username" autocomplete="username" autofocus>
+          </div>
+          <div class="field">
+            <label for="password">Password</label>
+            <input type="password" id="password" name="password" autocomplete="current-password">
+          </div>
+          <button type="submit" id="btn">Sign in</button>
+        </form>
       </div>
-      <button type="submit" id="btn">Sign in</button>
-    </form>
+    </div>
   </div>
+
   <script>
     // Redirect if already authed
     const existing = sessionStorage.getItem('tmuxremote_token');
@@ -105,8 +162,83 @@
         .then(r => { if (r.ok) location.href = '/app.html'; });
     }
 
-    const form = document.getElementById('loginForm');
     const err = document.getElementById('error');
+    const loading = document.getElementById('loading');
+    const loginContent = document.getElementById('loginContent');
+    const firebaseAuth = document.getElementById('firebaseAuth');
+    const passwordAuth = document.getElementById('passwordAuth');
+
+    // Load config to determine auth mode
+    fetch('/api/config')
+      .then(r => r.json())
+      .then(config => {
+        loading.style.display = 'none';
+        loginContent.style.display = 'block';
+
+        if (config.authMode === 'firebase' && config.firebaseConfig) {
+          firebaseAuth.style.display = 'block';
+          initFirebase(config.firebaseConfig);
+        } else {
+          passwordAuth.style.display = 'block';
+          document.getElementById('username').focus();
+        }
+      })
+      .catch(() => {
+        loading.style.display = 'none';
+        loginContent.style.display = 'block';
+        passwordAuth.style.display = 'block';
+      });
+
+    // ─── Firebase Auth ───
+    function initFirebase(firebaseConfig) {
+      const script = document.createElement('script');
+      script.src = 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js';
+      script.onload = () => {
+        const script2 = document.createElement('script');
+        script2.src = 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js';
+        script2.onload = () => {
+          firebase.initializeApp(firebaseConfig);
+          document.getElementById('googleBtn').addEventListener('click', signInWithGoogle);
+        };
+        document.head.appendChild(script2);
+      };
+      document.head.appendChild(script);
+    }
+
+    async function signInWithGoogle() {
+      err.style.display = 'none';
+      const btn = document.getElementById('googleBtn');
+      btn.disabled = true;
+      try {
+        const provider = new firebase.auth.GoogleAuthProvider();
+        const result = await firebase.auth().signInWithPopup(provider);
+        const idToken = await result.user.getIdToken();
+
+        const res = await fetch('/api/auth/firebase', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ idToken }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          sessionStorage.setItem('tmuxremote_token', data.token);
+          location.href = '/app.html';
+        } else {
+          const data = await res.json();
+          err.textContent = data.error || 'Authentication failed';
+          err.style.display = 'block';
+        }
+      } catch (e) {
+        if (e.code !== 'auth/popup-closed-by-user') {
+          err.textContent = e.message || 'Google sign-in failed';
+          err.style.display = 'block';
+        }
+      }
+      btn.disabled = false;
+    }
+
+    // ─── Password Auth ───
+    const form = document.getElementById('loginForm');
     form.addEventListener('submit', async e => {
       e.preventDefault();
       err.style.display = 'none';

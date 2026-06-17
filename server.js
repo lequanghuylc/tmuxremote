@@ -11,11 +11,42 @@ import { join, dirname, basename } from 'path';
 import { readdir, stat, readFile, writeFile, mkdir, unlink, rename, rm } from 'fs/promises';
 import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
+import admin from 'firebase-admin';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 4567;
 const JWT_SECRET = process.env.JWT_SECRET || randomUUID();
 const DATA_DIR = join(__dirname, '.data');
+const DEFAULT_USERNAME = process.env.DEFAULT_USERNAME || 'admin';
+const DEFAULT_PASSWORD = process.env.DEFAULT_PASSWORD || 'tmuxremote';
+const FIREBASE_SERVICE_ACCOUNT = process.env.FIREBASE_SERVICE_ACCOUNT || '';
+const FIREBASE_WEB_CONFIG = process.env.FIREBASE_WEB_CONFIG || '';
+const EMAIL_WHITELIST = process.env.EMAIL_WHITELIST || '';
+const FIREBASE_ENABLED = !!FIREBASE_SERVICE_ACCOUNT;
+
+// ─── Firebase Admin Init ───
+let firebaseApp = null;
+if (FIREBASE_ENABLED) {
+  try {
+    const serviceAccount = JSON.parse(readFileSync(FIREBASE_SERVICE_ACCOUNT, 'utf8'));
+    firebaseApp = admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount),
+    });
+    console.log('🔥 Firebase Authentication enabled');
+    if (EMAIL_WHITELIST) {
+      console.log(`📧 Email whitelist: ${EMAIL_WHITELIST}`);
+    }
+  } catch (err) {
+    console.error('❌ Failed to initialize Firebase:', err.message);
+    process.exit(1);
+  }
+}
+
+function isEmailAllowed(email) {
+  if (!EMAIL_WHITELIST) return true; // no whitelist = allow all
+  const allowed = EMAIL_WHITELIST.split(',').map(e => e.trim().toLowerCase());
+  return allowed.includes(email.toLowerCase());
+}
 
 if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
 
@@ -44,10 +75,10 @@ function saveUsers(users) {
 // Seed initial user
 let users = loadUsers();
 if (Object.keys(users).length === 0) {
-  const hash = bcrypt.hashSync('tmuxremote', 10);
-  users['admin'] = { passwordHash: hash, created: new Date().toISOString() };
+  const hash = bcrypt.hashSync(DEFAULT_PASSWORD, 10);
+  users[DEFAULT_USERNAME] = { passwordHash: hash, created: new Date().toISOString() };
   saveUsers(users);
-  console.log('🔑 Seeded initial user: admin / tmuxremote');
+  console.log(`🔑 Seeded initial user: ${DEFAULT_USERNAME} / ${DEFAULT_PASSWORD}`);
 }
 
 // ─── Session Store ───
@@ -81,8 +112,22 @@ function authMiddleware(req, res, next) {
   }
 }
 
+// Config endpoint (public) — tells client which auth mode to use
+app.get('/api/config', (req, res) => {
+  const config = { authMode: FIREBASE_ENABLED ? 'firebase' : 'password' };
+  if (FIREBASE_ENABLED && FIREBASE_WEB_CONFIG) {
+    try {
+      config.firebaseConfig = JSON.parse(FIREBASE_WEB_CONFIG);
+    } catch {}
+  }
+  res.json(config);
+});
+
 // Auth routes
 app.post('/api/login', (req, res) => {
+  if (FIREBASE_ENABLED) {
+    return res.status(403).json({ error: 'Password login disabled. Use Google sign-in.' });
+  }
   const { username, password } = req.body;
   const user = users[username];
   if (!user || !bcrypt.compareSync(password, user.passwordHash)) {
@@ -97,6 +142,28 @@ app.post('/api/logout', (req, res) => {
   res.clearCookie('token');
   res.json({ ok: true });
 });
+
+// Firebase Google auth
+if (FIREBASE_ENABLED) {
+  app.post('/api/auth/firebase', async (req, res) => {
+    const { idToken } = req.body;
+    if (!idToken) return res.status(400).json({ error: 'Missing idToken' });
+    try {
+      const decoded = await firebaseApp.auth().verifyIdToken(idToken);
+      const { email, name, picture } = decoded;
+      if (!email) return res.status(401).json({ error: 'No email in token' });
+      if (!isEmailAllowed(email)) {
+        return res.status(403).json({ error: `Email ${email} is not allowed` });
+      }
+      const username = email.split('@')[0];
+      const token = jwt.sign({ username, email, name, picture }, JWT_SECRET, { expiresIn: '7d' });
+      res.cookie('token', token, { httpOnly: true, maxAge: 7 * 24 * 60 * 60 * 1000, sameSite: 'lax' });
+      res.json({ ok: true, username, email, token });
+    } catch (err) {
+      res.status(401).json({ error: 'Invalid token: ' + err.message });
+    }
+  });
+}
 
 app.get('/api/me', authMiddleware, (req, res) => {
   res.json({ username: req.user.username });
@@ -400,5 +467,10 @@ wss.on('connection', (ws, req) => {
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`\n🖥️  tmuxremote running on http://0.0.0.0:${PORT}`);
-  console.log(`🔑 Default login: admin / tmuxremote\n`);
+  if (FIREBASE_ENABLED) {
+    console.log(`🔥 Auth: Firebase Google Sign-In`);
+  } else {
+    console.log(`🔑 Auth: ${DEFAULT_USERNAME} / ${DEFAULT_PASSWORD}`);
+  }
+  console.log('');
 });

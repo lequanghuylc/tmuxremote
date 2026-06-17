@@ -65,21 +65,44 @@ The server starts on **http://localhost:4567** by default.
 
 | Field | Value |
 |-------|-------|
-| Username | `admin` |
-| Password | `tmuxremote` |
+| Username | `admin` (configurable via `DEFAULT_USERNAME`) |
+| Password | `tmuxremote` (configurable via `DEFAULT_PASSWORD`) |
 
-> The default user is auto-created on first run. Change the password after logging in.
+> The default user is auto-created on first run.
 
 ### Configuration
+
+#### Core
 
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
 | `PORT` | `4567` | Server port |
 | `JWT_SECRET` | random UUID | Secret for JWT token signing (set this in production!) |
+| `DEFAULT_USERNAME` | `admin` | Default user for password auth |
+| `DEFAULT_PASSWORD` | `tmuxremote` | Default password for password auth |
+
+#### Firebase Google Authentication (optional)
+
+When all Firebase variables are set, password authentication is **disabled** and users sign in with Google.
+
+| Environment Variable | Required | Description |
+|---------------------|----------|-------------|
+| `FIREBASE_SERVICE_ACCOUNT` | Yes | Path to Firebase service account JSON file |
+| `FIREBASE_WEB_CONFIG` | Yes | Firebase web client config as JSON string (`apiKey`, `authDomain`, `projectId`) |
+| `EMAIL_WHITELIST` | No | Comma-separated list of allowed emails. If not set, all Google accounts are allowed |
 
 ```bash
-# Example: custom port and secret
-PORT=8080 JWT_SECRET=my-secret-key npm start
+# Password auth (default)
+npm start
+
+# Custom credentials
+DEFAULT_USERNAME=myuser DEFAULT_PASSWORD=mypass npm start
+
+# Firebase Google auth with email whitelist
+FIREBASE_SERVICE_ACCOUNT=/path/to/service-account.json \
+FIREBASE_WEB_CONFIG='{"apiKey":"...","authDomain":"...","projectId":"..."}' \
+EMAIL_WHITELIST="user1@gmail.com,user2@gmail.com" \
+npm start
 ```
 
 ## Usage
