@@ -644,3 +644,48 @@ body {
     display: block;
   }
 }
+
+/* ─── LineIcons ─── */
+.lni {
+  line-height: 1;
+  vertical-align: middle;
+}
+.sidebar-tab .lni {
+  font-size: 18px;
+}
+.tab .lni {
+  font-size: 13px;
+  margin-right: 4px;
+}
+.context-menu-item .lni {
+  font-size: 14px;
+  margin-right: 6px;
+  width: 16px;
+  text-align: center;
+}
+.tree-icon .lni {
+  font-size: 14px;
+}
+.tree-arrow .lni {
+  font-size: 10px;
+  transition: transform 0.15s;
+}
+.tree-arrow.expanded .lni {
+  transform: rotate(90deg);
+}
+.btn-icon .lni {
+  font-size: 18px;
+}
+.logo .lni {
+  font-size: 22px;
+  margin-right: 6px;
+}
+.header .lni {
+  font-size: 16px;
+}
+.mod-key .lni {
+  font-size: 14px;
+}
+.show-keyboard-fab .lni {
+  font-size: 20px;
+}
