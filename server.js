@@ -12,6 +12,7 @@ import { readdir, stat, readFile, writeFile, mkdir, unlink, rename, rm } from 'f
 import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import admin from 'firebase-admin';
+import { getAuth } from 'firebase-admin/auth';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 4567;
@@ -149,7 +150,7 @@ if (FIREBASE_ENABLED) {
     const { idToken } = req.body;
     if (!idToken) return res.status(400).json({ error: 'Missing idToken' });
     try {
-      const decoded = await firebaseApp.auth().verifyIdToken(idToken);
+      const decoded = await getAuth().verifyIdToken(idToken);
       const { email, name, picture } = decoded;
       if (!email) return res.status(401).json({ error: 'No email in token' });
       if (!isEmailAllowed(email)) {
