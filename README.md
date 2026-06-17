@@ -1,58 +1,201 @@
 # 🖥️ tmuxremote
 
-Web-based terminal powered by tmux. Sessions persist across browser close/reload.
+A web-based persistent terminal powered by [tmux](https://github.com/tmux/tmux), with a Monaco code editor, file manager, and mobile-friendly DevKeys keyboard.
+
+Sessions persist across browser refreshes, tabs, and devices — just like tmux.
+
+![Login](screenshots/login.png)
 
 ## Features
 
-- **tmux-backed** — terminals survive browser close, page reload, or network drop
-- **Multiple tabs** — each tab is a separate tmux session, renameable
-- **Auth required** — JWT-based login with seeded initial user
-- **Mobile-friendly** — on-screen dev keyboard with Esc, Ctrl, Alt, Tab, arrows, F-keys
-  - Draggable to reposition
-  - Dismissable with a floating FAB to bring it back
+- **Persistent tmux sessions** — close your browser, come back later, your terminal is still there
+- **Multiple named tabs** — create, rename, and close terminal/editor tabs
+- **Monaco code editor** — click any file in the tree to open it with full syntax highlighting (JS, HTML, CSS, YAML, TOML, PHP, Python, Go, Rust, and 30+ languages)
+- **Auto-save** — editor changes auto-save with 1s debounce, plus Ctrl+S
+- **File manager sidebar** — browse the filesystem, expand folders, right-click for context menu
+- **Favorites** — pin frequently used folders for quick access
+- **Git graph** — view git log with graph for favorited repos
+- **DevKeys keyboard** — mobile-friendly on-screen keyboard with Esc, Tab, Ctrl, Alt, arrows, and more (draggable, dismissible)
+- **Zoom controls** — ± font size with keyboard shortcuts (Ctrl+/-/0)
+- **JWT authentication** — secure login with session persistence
+
+![Terminal + File Manager](screenshots/main.png)
+
+![Monaco Editor](screenshots/editor.png)
+
+## Requirements
+
+| Dependency | Version |
+|-----------|---------|
+| **Node.js** | ≥ 18.x (tested with 24.15.0) |
+| **tmux** | any recent version |
+| **npm** | comes with Node.js |
+
+### System packages (Debian/Ubuntu)
+
+```bash
+sudo apt update && sudo apt install -y tmux build-essential python3
+```
+
+### System packages (macOS)
+
+```bash
+brew install tmux
+```
+
+> **Note:** `node-pty` requires native compilation, so `build-essential` (Linux) or Xcode CLI tools (macOS) are needed.
 
 ## Quick Start
 
 ```bash
-cd ~/projects/tmuxremote
+# Clone the repo
+git clone https://github.com/lequanghuylc/tmuxremote.git
+cd tmuxremote
+
+# Install dependencies
+npm install
+
+# Start the server
 npm start
 ```
 
-Open `http://localhost:4567`
+The server starts on **http://localhost:4567** by default.
 
-**Default credentials:** `admin` / `tmuxremote`
+### Default credentials
 
-## Configuration
+| Field | Value |
+|-------|-------|
+| Username | `admin` |
+| Password | `tmuxremote` |
 
-| Env Variable   | Default   | Description          |
-|---------------|-----------|----------------------|
-| `PORT`        | `4567`    | Server listen port   |
-| `JWT_SECRET`  | (random)  | JWT signing secret   |
+> The default user is auto-created on first run. Change the password after logging in.
 
-## Architecture
+### Configuration
+
+| Environment Variable | Default | Description |
+|---------------------|---------|-------------|
+| `PORT` | `4567` | Server port |
+| `JWT_SECRET` | random UUID | Secret for JWT token signing (set this in production!) |
+
+```bash
+# Example: custom port and secret
+PORT=8080 JWT_SECRET=my-secret-key npm start
+```
+
+## Usage
+
+### Terminal Tabs
+- Click **+** to create a new terminal tab
+- **Double-click** a tab name to rename it
+- Click **×** to close a tab
+- Each tab is a separate tmux session (`tmuxremote-<id>`)
+
+### File Manager
+- Click 📁 in the sidebar to toggle the file manager
+- Click ▶ to expand folders, click a file to open it in the editor
+- **Right-click** (or double-tap on mobile) for context menu:
+  - Files: Open in editor, Rename, Delete
+  - Folders: Open terminal here, Add to favorites, New file, New folder, Rename, Delete
+
+### Monaco Editor
+- Click any file in the file tree to open it in an editor tab
+- Syntax highlighting for 30+ languages
+- Auto-save (1s debounce) + Ctrl+S for immediate save
+- Minimap, bracket colorization, word wrap
+
+### DevKeys (Mobile Keyboard)
+- On mobile viewports, a **⌨** button appears to toggle the DevKeys keyboard
+- Keys: `^C`, `Esc`, `Tab`, `Ctrl`, `Alt`, `↑↓←→`, `Home`, `End`, `PgUp`, `PgDn`, `Ins`, `Del`, `BS`, `⌘`, `F1`-`F12`, and special characters
+- **Drag** the keyboard to reposition it
+- **Toggle** to expand/collapse additional key rows
+
+### Zoom
+- Use **−/+** buttons in the header to adjust font size (4px–32px)
+- Keyboard: `Ctrl+-` to zoom out, `Ctrl++` to zoom in, `Ctrl+0` to reset
+
+## Project Structure
 
 ```
-Browser (xterm.js) ←WebSocket→ Node.js (node-pty) ←→ tmux sessions
+tmuxremote/
+├── server.js              # Express + WebSocket + tmux backend
+├── public/
+│   ├── index.html         # Main app (terminal + editor + sidebar)
+│   ├── css/style.css      # All styles
+│   └── js/app.js          # Frontend: tabs, xterm, Monaco, DevKeys, file tree
+├── screenshots/           # App screenshots for documentation
+├── cypress/               # E2E tests
+│   └── e2e/
+├── .data/                 # Runtime data (gitignored)
+│   ├── users.json         # User credentials
+│   ├── sessions.json      # Tab/session state
+│   └── favorites.json     # Favorited paths
+├── package.json
+└── README.md
 ```
 
-- Each tab maps to a dedicated tmux session (`tmuxremote-<id>`)
-- WebSocket carries terminal I/O as JSON messages
-- PTYs are kept alive server-side — browser can disconnect freely
-- Sessions stored in `.data/sessions.json`, users in `.data/users.json`
+## Running with systemd (Production)
 
-## Mobile Keyboard
+```ini
+# /etc/systemd/system/tmuxremote.service
+[Unit]
+Description=tmuxremote web terminal
+After=network.target
 
-On touch devices (or screens ≤768px), a dev keyboard appears at the bottom with:
+[Service]
+Type=simple
+WorkingDirectory=/path/to/tmuxremote
+ExecStart=/usr/bin/node server.js
+Restart=always
+Environment=PORT=4567
+Environment=JWT_SECRET=your-secret-here
 
-- **Esc, Home, End, PgUp, PgDn** — navigation
-- **Ctrl, Alt, ⌘, Tab, Shift-Tab** — modifiers (tap to toggle, then tap a key)
-- **Arrow keys, Del** — movement
-- **F1–F12** — function keys
-- **|, ~, \`, \\** — common shell symbols
-- **^C, ^D, ^Z** — signal shortcuts
+[Install]
+WantedBy=multi-user.target
+```
 
-Drag the handle to reposition. Tap ✕ to dismiss. Tap ⌨ FAB to restore.
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now tmuxremote
+```
+
+## Running with Docker
+
+```dockerfile
+FROM node:24-slim
+RUN apt-get update && apt-get install -y tmux build-essential python3 && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --production
+COPY . .
+EXPOSE 4567
+CMD ["node", "server.js"]
+```
+
+```bash
+docker build -t tmuxremote .
+docker run -d -p 4567:4567 --name tmuxremote tmuxremote
+```
+
+## Development
+
+```bash
+# Install dev dependencies (includes Cypress)
+npm install
+
+# Run E2E tests
+npx cypress run
+
+# Run tests with visible browser
+npx cypress open
+```
+
+## Security Notes
+
+- Change the default password immediately after first login
+- Set a strong `JWT_SECRET` in production
+- Use a reverse proxy (nginx/caddy) with HTTPS for production deployments
+- The server binds to `0.0.0.0` by default — firewall as needed
 
 ## License
 
-MIT
+ISC
