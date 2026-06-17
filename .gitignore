@@ -4,3 +4,8 @@ cypress/videos/
 cypress/downloads/
 cypress/fixtures/
 .env
+
+# Firebase secrets
+firebase-service-account.json
+.firebase-web-config.json
+.env
