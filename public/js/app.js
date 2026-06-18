@@ -62,9 +62,9 @@ function renderTabs() {
     el.dataset.id = tab.id;
     let icon;
     if (tab.type === 'editor') icon = '<i class="lni lni-pencil-1"></i>';
-    else if (tab.type === 'image') icon = '<i class="lni lni-image"></i>';
+    else if (tab.type === 'image') icon = '<i class="lni lni-gallery"></i>';
     else if (tab.type === 'pdf') icon = '<i class="lni lni-file-multiple"></i>';
-    else if (tab.type === 'settings') icon = '<i class="lni lni-cog"></i>';
+    else if (tab.type === 'settings') icon = '<i class="lni lni-gear-1"></i>';
     else icon = '<i class="lni lni-monitor-code"></i>';
     el.innerHTML = `
       <span class="tab-icon">${icon}</span>

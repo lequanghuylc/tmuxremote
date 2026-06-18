@@ -88,7 +88,7 @@ export function renderSettingsPanel(container, settings, onChange) {
     </div>
 
     <div class="settings-section">
-      <h3><i class="lni lni-save"></i> Saving</h3>
+      <h3><i class="lni lni-floppy-disk-1"></i> Saving</h3>
       <div class="setting-row">
         <label>Auto-save</label>
         <label class="toggle">
