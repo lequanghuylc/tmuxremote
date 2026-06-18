@@ -168,8 +168,24 @@ async function createTab(name) {
 
 async function closeTab(tabId) {
   const tab = tabs.find(t => t.id === tabId);
-  const label = tab?.type === 'editor' ? 'Close this editor tab?' : 'Close this tab? The tmux session will be killed.';
-  if (!confirm(label)) return;
+  if (!tab) return;
+
+  // Smart confirm based on tab type
+  if (tab.type === 'terminal') {
+    // Only confirm if terminal has recent activity (something likely running)
+    const term = terminals[tabId];
+    if (term && Date.now() - term.lastActivity < 2000) {
+      if (!confirm('A process may still be running. Close this terminal tab?')) return;
+    }
+  } else if (tab.type === 'editor') {
+    // Only confirm if file has unsaved changes
+    const editor = editors[tabId];
+    if (editor && editor.dirty) {
+      if (!confirm('You have unsaved changes. Close without saving?')) return;
+    }
+  }
+  // image, pdf, settings: no confirm
+
   await fetch(`/api/tabs/${tabId}`, { method: 'DELETE', headers: { 'Authorization': 'Bearer ' + getToken() } });
   tabs = tabs.filter(t => t.id !== tabId);
 
@@ -359,7 +375,10 @@ function initTerminal(tabId) {
   ws.addEventListener('message', (e) => {
     try {
       const msg = JSON.parse(e.data);
-      if (msg.type === 'data') terminal.write(msg.data);
+      if (msg.type === 'data') {
+        terminal.write(msg.data);
+        if (terminals[tabId]) terminals[tabId].lastActivity = Date.now();
+      }
     } catch {}
   });
 
@@ -397,7 +416,7 @@ function initTerminal(tabId) {
   });
   resizeObserver.observe(container);
 
-  terminals[tabId] = { terminal, fitAddon, ws, container, resizeObserver };
+  terminals[tabId] = { terminal, fitAddon, ws, container, resizeObserver, lastActivity: 0 };
 
   setTimeout(() => terminal.focus(), 50);
 }
@@ -524,6 +543,7 @@ async function initEditor(tabId) {
         headers: authHeaders(),
         body: JSON.stringify({ path: tab.filePath, content: model.getValue() }),
       });
+      if (editors[tabId]) editors[tabId].dirty = false;
       // Brief visual feedback
       const statusBar = container.querySelector('.editor-status');
       if (statusBar) {
@@ -536,7 +556,12 @@ async function initEditor(tabId) {
     }
   });
 
-  editors[tabId] = { monaco: editor, model, filePath: tab.filePath, container, resizeObserver };
+  editors[tabId] = { monaco: editor, model, filePath: tab.filePath, container, resizeObserver, dirty: false };
+
+  // Track unsaved changes
+  model.onDidChangeContent(() => {
+    if (editors[tabId]) editors[tabId].dirty = true;
+  });
 
   setTimeout(() => editor.focus(), 50);
 }
