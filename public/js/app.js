@@ -58,7 +58,7 @@ function renderTabs() {
     const el = document.createElement('div');
     el.className = `tab ${tab.id === activeTabId ? 'active' : ''}`;
     el.dataset.id = tab.id;
-    const icon = tab.type === 'editor' ? '<i class="lni lni-pencil"></i>' : '<i class="lni lni-terminal"></i>';
+    const icon = tab.type === 'editor' ? '<i class="lni lni-pencil-1"></i>' : '<i class="lni lni-monitor-code"></i>';
     el.innerHTML = `
       <span class="tab-icon">${icon}</span>
       <span class="tab-name" title="Double-click to rename">${escHtml(tab.name)}</span>
@@ -237,7 +237,7 @@ function showEmptyState() {
     empty.id = 'emptyState';
     empty.className = 'empty-state';
     empty.innerHTML = `
-      <div class="icon"><i class="lni lni-terminal"></i></div>
+      <div class="icon"><i class="lni lni-monitor-code"></i></div>
       <div>No terminal tabs open</div>
       <button id="emptyNewTab">+ New Tab</button>
     `;
@@ -906,7 +906,7 @@ function renderFileTree() {
     section.className = 'tree-favorites-section';
     const label = document.createElement('div');
     label.className = 'tree-section-label';
-    label.innerHTML = '<i class="lni lni-star"></i> Favorites';
+    label.innerHTML = '<i class="lni lni-star-fat"></i> Favorites';
     section.appendChild(label);
 
     favorites.forEach(favPath => {
@@ -924,7 +924,7 @@ function renderFileTree() {
   // Root section
   const rootLabel = document.createElement('div');
   rootLabel.className = 'tree-section-label';
-  rootLabel.innerHTML = '<i class="lni lni-server"></i> Root';
+  rootLabel.innerHTML = '<i class="lni lni-database-2"></i> Root';
   container.appendChild(rootLabel);
 
   // Root node (auto-expand)
@@ -952,16 +952,16 @@ function createTreeItem(entry) {
 
   const arrow = document.createElement('span');
   arrow.className = 'tree-arrow' + (entry.isDir ? '' : ' hidden');
-  arrow.innerHTML = '<i class="lni lni-chevron-right"></i>';
+  arrow.innerHTML = '<i class="lni lni-angle-double-right"></i>';
 
   const icon = document.createElement('span');
   icon.className = 'tree-icon';
   if (entry.isFavorite) {
-    icon.innerHTML = '<i class="lni lni-star"></i>';
+    icon.innerHTML = '<i class="lni lni-star-fat"></i>';
   } else if (entry.isDir) {
-    icon.innerHTML = '<i class="lni lni-folder"></i>';
+    icon.innerHTML = '<i class="lni lni-folder-1"></i>';
   } else {
-    icon.innerHTML = '<i class="lni lni-file"></i>';
+    icon.innerHTML = '<i class="lni lni-file-multiple"></i>';
   }
 
   const name = document.createElement('span');
@@ -1289,7 +1289,7 @@ async function loadGitGraphs() {
 
     const header = document.createElement('div');
     header.className = 'git-repo-header';
-    header.innerHTML = `<i class="lni lni-code-branch"></i> <span>${escHtml(favPath)}</span>`;
+    header.innerHTML = `<i class="lni lni-git"></i> <span>${escHtml(favPath)}</span>`;
     repoDiv.appendChild(header);
 
     try {
