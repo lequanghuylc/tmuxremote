@@ -24,6 +24,10 @@ const FIREBASE_SERVICE_ACCOUNT = process.env.FIREBASE_SERVICE_ACCOUNT || '';
 const FIREBASE_WEB_CONFIG = process.env.FIREBASE_WEB_CONFIG || '';
 const EMAIL_WHITELIST = process.env.EMAIL_WHITELIST || '';
 const FIREBASE_ENABLED = !!FIREBASE_SERVICE_ACCOUNT;
+const CLI_API_KEY = process.env.CLI_API_KEY || 'tmuxremote-cli-key';
+
+// ─── CLI Pending Opens Queue ───
+const pendingOpens = []; // { id, type, filePath, ts }
 
 // ─── Firebase Admin Init ───
 let firebaseApp = null;
@@ -182,8 +186,28 @@ app.post('/api/tabs', authMiddleware, (req, res) => {
   const store = loadSessions();
 
   if (type === 'editor' && filePath) {
-    // Editor tab
     const tab = { id, name: name || basename(filePath), type: 'editor', filePath, created: new Date().toISOString() };
+    store.tabs.push(tab);
+    saveSessionStore(store);
+    return res.json(tab);
+  }
+
+  if (type === 'image' && filePath) {
+    const tab = { id, name: name || basename(filePath), type: 'image', filePath, created: new Date().toISOString() };
+    store.tabs.push(tab);
+    saveSessionStore(store);
+    return res.json(tab);
+  }
+
+  if (type === 'pdf' && filePath) {
+    const tab = { id, name: name || basename(filePath), type: 'pdf', filePath, created: new Date().toISOString() };
+    store.tabs.push(tab);
+    saveSessionStore(store);
+    return res.json(tab);
+  }
+
+  if (type === 'settings') {
+    const tab = { id, name: name || 'Settings', type: 'settings', created: new Date().toISOString() };
     store.tabs.push(tab);
     saveSessionStore(store);
     return res.json(tab);
@@ -328,6 +352,42 @@ app.post('/api/fs/touch', authMiddleware, async (req, res) => {
   try {
     await writeFile(filePath, '', { flag: 'a' }); // append nothing = touch
     res.json({ ok: true, path: filePath });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ─── CLI API ───
+// Authenticated via API key (for CLI tools like `tredit`)
+app.post('/api/cli/open', (req, res) => {
+  const { apiKey, filePath, type } = req.body;
+  if (!apiKey || apiKey !== CLI_API_KEY) {
+    return res.status(401).json({ error: 'Invalid API key' });
+  }
+  if (!filePath) return res.status(400).json({ error: 'filePath required' });
+
+  const id = randomUUID().slice(0, 8);
+  const fileType = type || 'editor';
+  const entry = { id, type: fileType, filePath, ts: Date.now() };
+  pendingOpens.push(entry);
+  console.log(`📎 CLI open: ${fileType} → ${filePath}`);
+  res.json({ ok: true, id });
+});
+
+// Frontend polls this to pick up CLI-initiated tab opens
+app.get('/api/cli/pending', authMiddleware, (req, res) => {
+  const items = pendingOpens.splice(0, pendingOpens.length);
+  res.json(items);
+});
+
+// ─── Raw File Serving (for images/PDFs) ───
+app.get('/api/fs/raw', authMiddleware, (req, res) => {
+  const filePath = req.query.path;
+  if (!filePath) return res.status(400).json({ error: 'path required' });
+  // Security: prevent path traversal
+  const resolved = filePath;
+  try {
+    res.sendFile(resolved);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }

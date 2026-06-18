@@ -1,5 +1,6 @@
 import { Terminal } from '/node_modules/@xterm/xterm/lib/xterm.mjs';
 import { FitAddon } from '/node_modules/@xterm/addon-fit/lib/addon-fit.mjs';
+import { loadSettings, saveSettings, renderSettingsPanel, DEFAULT_SETTINGS } from './settings.js';
 
 // ─── State ───
 let currentUser = null;
@@ -9,6 +10,7 @@ let terminals = {};  // { tabId: { terminal, fitAddon, ws, container, fontSize }
 let editors = {};    // { tabId: { monaco, model, filePath, saveTimer, container } }
 let activeModifiers = new Set();
 let currentFontSize = 14;
+let settings = loadSettings();
 
 // ─── Token ───
 function getToken() {
@@ -58,7 +60,12 @@ function renderTabs() {
     const el = document.createElement('div');
     el.className = `tab ${tab.id === activeTabId ? 'active' : ''}`;
     el.dataset.id = tab.id;
-    const icon = tab.type === 'editor' ? '<i class="lni lni-pencil-1"></i>' : '<i class="lni lni-monitor-code"></i>';
+    let icon;
+    if (tab.type === 'editor') icon = '<i class="lni lni-pencil-1"></i>';
+    else if (tab.type === 'image') icon = '<i class="lni lni-image"></i>';
+    else if (tab.type === 'pdf') icon = '<i class="lni lni-file-multiple"></i>';
+    else if (tab.type === 'settings') icon = '<i class="lni lni-cog"></i>';
+    else icon = '<i class="lni lni-monitor-code"></i>';
     el.innerHTML = `
       <span class="tab-icon">${icon}</span>
       <span class="tab-name" title="Double-click to rename">${escHtml(tab.name)}</span>
@@ -176,12 +183,19 @@ async function closeTab(tabId) {
 
   // Clean up editor
   if (editors[tabId]) {
-    clearTimeout(editors[tabId].saveTimer);
     editors[tabId].model?.dispose();
     editors[tabId].monaco?.dispose();
     editors[tabId].container?.remove();
     delete editors[tabId];
   }
+
+  // Clean up settings/image/pdf containers
+  const settingsEl = document.getElementById(`settings-${tabId}`);
+  if (settingsEl) settingsEl.remove();
+  const imageEl = document.getElementById(`image-${tabId}`);
+  if (imageEl) imageEl.remove();
+  const pdfEl = document.getElementById(`pdf-${tabId}`);
+  if (pdfEl) pdfEl.remove();
 
   if (activeTabId === tabId) {
     activeTabId = null;
@@ -198,7 +212,7 @@ function switchTab(tabId) {
   hideEmptyState();
 
   // Hide all panels
-  document.querySelectorAll('.tab-terminal, .tab-editor').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.tab-terminal, .tab-editor, .tab-settings, .tab-image, .tab-pdf').forEach(el => el.classList.remove('active'));
 
   if (tab?.type === 'editor') {
     if (editors[tabId]) {
@@ -210,6 +224,12 @@ function switchTab(tabId) {
     } else {
       initEditor(tabId);
     }
+  } else if (tab?.type === 'settings') {
+    showSettingsTab(tabId);
+  } else if (tab?.type === 'image') {
+    showImageTab(tabId);
+  } else if (tab?.type === 'pdf') {
+    showPdfTab(tabId);
   } else {
     // Terminal tab
     if (terminals[tabId]) {
@@ -414,20 +434,30 @@ function getLanguageForFile(filePath) {
   return LANG_MAP[ext] || 'plaintext';
 }
 
+const IMAGE_EXTS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico', 'tiff']);
+const PDF_EXTS = new Set(['pdf']);
+
+function getFileType(filePath) {
+  const ext = filePath.split('.').pop().toLowerCase();
+  if (IMAGE_EXTS.has(ext)) return 'image';
+  if (PDF_EXTS.has(ext)) return 'pdf';
+  return 'editor';
+}
+
 async function openFileInEditor(filePath) {
   // Check if already open
-  const existingTab = tabs.find(t => t.type === 'editor' && t.filePath === filePath);
+  const existingTab = tabs.find(t => (t.type === 'editor' || t.type === 'image' || t.type === 'pdf') && t.filePath === filePath);
   if (existingTab) {
     switchTab(existingTab.id);
     return;
   }
 
-  // Create editor tab via API
+  const fileType = getFileType(filePath);
   const name = filePath.split('/').pop();
   const res = await fetch('/api/tabs', {
     method: 'POST',
     headers: authHeaders(),
-    body: JSON.stringify({ type: 'editor', filePath, name }),
+    body: JSON.stringify({ type: fileType, filePath, name }),
   });
   const tab = await res.json();
   tabs.push(tab);
@@ -460,20 +490,25 @@ async function initEditor(tabId) {
 
   const language = getLanguageForFile(tab.filePath);
   const model = monaco.editor.createModel(content, language);
+
+  const statusBar = document.createElement('div');
+  statusBar.className = 'editor-status';
+  container.appendChild(statusBar);
+
   const editor = monaco.editor.create(container, {
     model,
     theme: 'vs-dark',
     automaticLayout: false,
-    fontSize: 14,
+    fontSize: settings.fontSize,
     fontFamily: "'SF Mono', 'Menlo', 'Monaco', 'Cascadia Code', 'Consolas', monospace",
-    minimap: { enabled: true },
+    minimap: { enabled: settings.minimap },
     scrollBeyondLastLine: false,
-    wordWrap: 'on',
-    tabSize: 2,
+    wordWrap: settings.wordWrap ? 'on' : 'off',
+    tabSize: settings.tabSize,
     renderWhitespace: 'selection',
     bracketPairColorization: { enabled: true },
     smoothScrolling: true,
-    cursorBlinking: 'smooth',
+    cursorBlinking: settings.cursorBlinking ? 'smooth' : 'solid',
     padding: { top: 8 },
   });
 
@@ -481,30 +516,27 @@ async function initEditor(tabId) {
   const resizeObserver = new ResizeObserver(() => editor.layout());
   resizeObserver.observe(container);
 
-  // Auto-save with debounce
-  let saveTimer = null;
-  model.onDidChangeContent(() => {
-    clearTimeout(saveTimer);
-    saveTimer = setTimeout(async () => {
+  // Ctrl+S / Cmd+S save (NO auto-save)
+  editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, async () => {
+    try {
       await fetch('/api/fs/write', {
         method: 'POST',
         headers: authHeaders(),
         body: JSON.stringify({ path: tab.filePath, content: model.getValue() }),
       });
-    }, 1000);
+      // Brief visual feedback
+      const statusBar = container.querySelector('.editor-status');
+      if (statusBar) {
+        statusBar.textContent = '✓ Saved';
+        statusBar.classList.add('saved');
+        setTimeout(() => { statusBar.textContent = ''; statusBar.classList.remove('saved'); }, 2000);
+      }
+    } catch (err) {
+      console.error('Save failed:', err);
+    }
   });
 
-  // Ctrl+S save immediately
-  editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, async () => {
-    clearTimeout(saveTimer);
-    await fetch('/api/fs/write', {
-      method: 'POST',
-      headers: authHeaders(),
-      body: JSON.stringify({ path: tab.filePath, content: model.getValue() }),
-    });
-  });
-
-  editors[tabId] = { monaco: editor, model, filePath: tab.filePath, saveTimer, container, resizeObserver };
+  editors[tabId] = { monaco: editor, model, filePath: tab.filePath, container, resizeObserver };
 
   setTimeout(() => editor.focus(), 50);
 }
@@ -547,6 +579,96 @@ function showNewTabModal() {
     if (e.key === 'Enter') { createTab(input.value.trim()); closeModal(); }
     if (e.key === 'Escape') closeModal();
   });
+}
+
+// ─── Settings Tab ───
+function showSettingsTab(tabId) {
+  let container = document.getElementById(`settings-${tabId}`);
+  if (!container) {
+    container = document.createElement('div');
+    container.className = 'tab-settings active';
+    container.id = `settings-${tabId}`;
+    document.getElementById('terminalContainer').appendChild(container);
+    renderSettingsPanel(container, settings, (key, value) => {
+      // Apply settings changes to existing editors/terminals
+      if (key === 'fontSize') {
+        for (const eid in editors) {
+          editors[eid].monaco.updateOptions({ fontSize: value });
+        }
+        for (const tid in terminals) {
+          terminals[tid].terminal.options.fontSize = value;
+          requestAnimationFrame(() => {
+            terminals[tid].fitAddon.fit();
+          });
+        }
+      }
+      if (key === 'wordWrap') {
+        for (const eid in editors) {
+          editors[eid].monaco.updateOptions({ wordWrap: value ? 'on' : 'off' });
+        }
+      }
+      if (key === 'minimap') {
+        for (const eid in editors) {
+          editors[eid].monaco.updateOptions({ minimap: { enabled: value } });
+        }
+      }
+      if (key === 'cursorBlinking') {
+        for (const eid in editors) {
+          editors[eid].monaco.updateOptions({ cursorBlinking: value ? 'smooth' : 'solid' });
+        }
+      }
+      if (key === 'tabSize') {
+        for (const eid in editors) {
+          editors[eid].model.updateOptions({ tabSize: value });
+        }
+      }
+    });
+  }
+  container.classList.add('active');
+}
+
+// ─── Image Tab ───
+function showImageTab(tabId) {
+  const tab = tabs.find(t => t.id === tabId);
+  if (!tab) return;
+
+  let container = document.getElementById(`image-${tabId}`);
+  if (!container) {
+    container = document.createElement('div');
+    container.className = 'tab-image active';
+    container.id = `image-${tabId}`;
+    const token = getToken();
+    const imgUrl = `/api/fs/raw?path=${encodeURIComponent(tab.filePath)}&token=${encodeURIComponent(token)}`;
+    container.innerHTML = `
+      <div class="image-viewer">
+        <img src="${imgUrl}" alt="${escHtml(tab.name)}" />
+      </div>
+    `;
+    document.getElementById('terminalContainer').appendChild(container);
+  }
+  container.classList.add('active');
+}
+
+// ─── PDF Tab ───
+function showPdfTab(tabId) {
+  const tab = tabs.find(t => t.id === tabId);
+  if (!tab) return;
+
+  let container = document.getElementById(`pdf-${tabId}`);
+  if (!container) {
+    container = document.createElement('div');
+    container.className = 'tab-pdf active';
+    container.id = `pdf-${tabId}`;
+    const token = getToken();
+    const pdfUrl = `/api/fs/raw?path=${encodeURIComponent(tab.filePath)}&token=${encodeURIComponent(token)}`;
+    container.innerHTML = `
+      <div class="pdf-viewer">
+        <iframe src="${pdfUrl}" frameborder="0"></iframe>
+      </div>
+    `;
+    document.getElementById('terminalContainer').appendChild(container);
+  }
+  container.classList.add('active');
 }
 
 // ─── Paste Modal (works on HTTP without Clipboard API) ───
@@ -821,6 +943,29 @@ document.addEventListener('keydown', (e) => {
     zoomReset();
   }
 });
+
+// Settings button
+document.getElementById('settingsBtn').addEventListener('click', () => {
+  // Check if settings tab already exists
+  const existing = tabs.find(t => t.type === 'settings');
+  if (existing) {
+    switchTab(existing.id);
+  } else {
+    createSettingsTab();
+  }
+});
+
+async function createSettingsTab() {
+  const res = await fetch('/api/tabs', {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ type: 'settings', name: 'Settings' }),
+  });
+  const tab = await res.json();
+  tabs.push(tab);
+  renderTabs();
+  switchTab(tab.id);
+}
 
 // ─── Helpers ───
 function escHtml(s) {
@@ -1360,6 +1505,24 @@ async function init() {
   initMobileKeyboard();
   updateZoomLabel();
   renderFileTree();
+
+  // Poll for CLI-initiated tab opens
+  setInterval(async () => {
+    try {
+      const res = await fetch('/api/cli/pending', { headers: { 'Authorization': 'Bearer ' + getToken() } });
+      if (res.ok) {
+        const items = await res.json();
+        for (const item of items) {
+          if (item.type === 'editor') {
+            openFileInEditor(item.filePath);
+          } else {
+            // image or pdf
+            openFileInEditor(item.filePath);
+          }
+        }
+      }
+    } catch {}
+  }, 2000);
 }
 
 init();
