@@ -16,6 +16,17 @@ import admin from 'firebase-admin';
 import { getAuth } from 'firebase-admin/auth';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+// Resolve full path to tmux (nohup/launchd may not have /opt/homebrew/bin in PATH)
+let TMUX_BIN = 'tmux';
+try {
+  TMUX_BIN = execSync('which tmux', { encoding: 'utf8' }).trim();
+} catch {
+  // Try common macOS brew path
+  if (existsSync('/opt/homebrew/bin/tmux')) TMUX_BIN = '/opt/homebrew/bin/tmux';
+  else if (existsSync('/usr/local/bin/tmux')) TMUX_BIN = '/usr/local/bin/tmux';
+}
+console.log(`🔧 Using tmux: ${TMUX_BIN}`);
 const PORT = process.env.PORT || 4567;
 const JWT_SECRET = process.env.JWT_SECRET || randomUUID();
 const DATA_DIR = join(__dirname, '.data');
@@ -240,7 +251,7 @@ app.delete('/api/tabs/:id', authMiddleware, (req, res) => {
   // Kill tmux session only for terminal tabs
   if (tab.type === 'terminal' && tab.tmuxSession) {
     try {
-      const p = pty.spawn('tmux', ['kill-session', '-t', tab.tmuxSession], { name: 'xterm-256color', cols: 80, rows: 24 });
+      const p = pty.spawn(TMUX_BIN, ['kill-session', '-t', tab.tmuxSession], { name: 'xterm-256color', cols: 80, rows: 24 });
       p.onExit(() => {});
     } catch {}
   }
@@ -467,7 +478,7 @@ function getOrCreatePty(tmuxSession, cols = 120, rows = 30) {
 
   // tmux -A = attach if session exists, create if not
   const args = ['new-session', '-A', '-s', tmuxSession];
-  const term = pty.spawn('tmux', args, {
+  const term = pty.spawn(TMUX_BIN, args, {
     name: 'xterm-256color',
     cols,
     rows,
