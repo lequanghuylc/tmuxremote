@@ -384,6 +384,13 @@ function initTerminal(tabId) {
 
   ws.addEventListener('open', () => {
     ws.send(JSON.stringify({ type: 'resize', cols: terminal.cols, rows: terminal.rows }));
+    // Force tmux to repaint after reconnect so previous stdout is visible
+    setTimeout(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'resize', cols: terminal.cols, rows: terminal.rows }));
+      }
+      terminal.scrollToBottom();
+    }, 300);
   });
 
   ws.addEventListener('close', (e) => {
@@ -1025,6 +1032,35 @@ function initSidebar() {
       if (tab.dataset.panel === 'git') loadGitGraphs();
     });
   });
+
+  // ── Resizable sidebar ──
+  const resizeHandle = document.getElementById('sidebarResizeHandle');
+  if (resizeHandle) {
+    let isResizing = false;
+
+    resizeHandle.addEventListener('mousedown', (e) => {
+      isResizing = true;
+      resizeHandle.classList.add('dragging');
+      document.body.style.cursor = 'col-resize';
+      document.body.style.userSelect = 'none';
+      e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!isResizing) return;
+      const newWidth = Math.max(180, Math.min(600, e.clientX));
+      sidebar.style.width = newWidth + 'px';
+    });
+
+    document.addEventListener('mouseup', () => {
+      if (isResizing) {
+        isResizing = false;
+        resizeHandle.classList.remove('dragging');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+      }
+    });
+  }
 }
 
 // ─── Favorites State ───
@@ -1143,8 +1179,13 @@ function createTreeItem(entry) {
   row.appendChild(name);
 
   // Calculate indent level based on path depth
-  const depth = entry.path === '/' ? 0 : entry.path.split('/').filter(Boolean).length;
-  row.style.paddingLeft = (8 + depth * 16) + 'px';
+  if (entry.isFavorite) {
+    // Favorites are top-level items — use minimal indent
+    row.style.paddingLeft = '8px';
+  } else {
+    const depth = entry.path === '/' ? 0 : entry.path.split('/').filter(Boolean).length;
+    row.style.paddingLeft = (8 + depth * 16) + 'px';
+  }
 
   const childrenContainer = document.createElement('div');
   childrenContainer.className = 'tree-children';
@@ -1218,22 +1259,21 @@ async function toggleTreeItem(path, container, arrow) {
     if (arrow) arrow.classList.add('expanded');
     if (container) container.classList.add('expanded');
 
-    // Load children if not loaded
-    if (!state.loaded) {
-      if (container) {
-        const loading = document.createElement('div');
-        loading.className = 'tree-loading';
-        loading.textContent = 'Loading...';
-        container.appendChild(loading);
-      }
+    // Always re-fetch contents when expanding to pick up new files
+    if (container) {
+      container.innerHTML = '';
+      const loading = document.createElement('div');
+      loading.className = 'tree-loading';
+      loading.textContent = 'Loading...';
+      container.appendChild(loading);
+    }
 
-      const children = await loadDir(path);
-      state.children = children;
-      state.loaded = true;
+    const children = await loadDir(path);
+    state.children = children;
+    state.loaded = true;
 
-      if (container) {
-        renderChildren(container, path);
-      }
+    if (container) {
+      renderChildren(container, path);
     }
   } else {
     // Collapse

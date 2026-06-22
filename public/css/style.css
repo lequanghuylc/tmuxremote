@@ -93,6 +93,21 @@ body {
   background: #0d1117;
   border-right: 1px solid #30363d;
   overflow: hidden;
+  position: relative;
+}
+.sidebar-resize-handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 5px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 10;
+  transition: background 0.15s;
+}
+.sidebar-resize-handle:hover,
+.sidebar-resize-handle.dragging {
+  background: #58a6ff;
 }
 .sidebar-tabs {
   display: flex;
@@ -388,6 +403,11 @@ body {
 .terminal-container .xterm-viewport::-webkit-scrollbar { width: 8px; }
 .terminal-container .xterm-viewport::-webkit-scrollbar-track { background: #0d1117; }
 .terminal-container .xterm-viewport::-webkit-scrollbar-thumb { background: #30363d; border-radius: 4px; }
+.terminal-container .xterm-viewport::-webkit-scrollbar-thumb:hover { background: #484f58; }
+.terminal-container .xterm-viewport {
+  scrollbar-width: thin;
+  scrollbar-color: #30363d #0d1117;
+}
 .tab-terminal {
   position: absolute;
   top: 0; left: 0; right: 0; bottom: 0;

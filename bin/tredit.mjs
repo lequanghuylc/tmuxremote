@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { resolve } from 'path';
-import { existsSync } from 'fs';
 
 const args = process.argv.slice(2);
 let filePath = null;
